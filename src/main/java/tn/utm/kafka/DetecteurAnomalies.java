@@ -1,8 +1,13 @@
 package tn.utm.kafka;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.kafka.clients.consumer.*;
-import org.apache.kafka.clients.producer.*;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import tn.utm.kafka.models.EventPOS;
@@ -12,6 +17,7 @@ import java.util.Collections;
 import java.util.Properties;
 
 public class DetecteurAnomalies {
+
     public static void main(String[] args) {
         Properties cProps = new Properties();
         cProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
@@ -26,6 +32,7 @@ public class DetecteurAnomalies {
         pProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
         pProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
         pProps.put(ProducerConfig.ACKS_CONFIG, "all");
+        pProps.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
 
         ObjectMapper mapper = new ObjectMapper();
 
@@ -33,22 +40,27 @@ public class DetecteurAnomalies {
              KafkaProducer<String, String> producer = new KafkaProducer<>(pProps)) {
 
             consumer.subscribe(Collections.singletonList("pos-events"));
+            System.out.println("DetecteurAnomalies démarré...");
 
             while (true) {
                 ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(500));
 
-                for (ConsumerRecord<String, String> r : records) {
-                    EventPOS e = mapper.readValue(r.value(), EventPOS.class);
+                for (ConsumerRecord<String, String> record : records) {
+                    EventPOS event = mapper.readValue(record.value(), EventPOS.class);
 
-                    if ("RETOUR".equals(e.type) && e.montant > 200) {
-                        String alerte = "ALERTE RETOUR > 200 DT : " + r.value();
-                        producer.send(new ProducerRecord<>("alertes-retours", e.ville, alerte));
-                        System.out.println(alerte);
+                    if ("RETOUR".equals(event.getType()) && event.getMontant() > 200) {
+                        String alerte = String.format(
+                                "RETOUR anormal: ville=%s, caisse=%s, montant=%.2f, ts=%s",
+                                event.getVille(), event.getIdCaisse(), event.getMontant(), event.getTimestamp()
+                        );
+
+                        producer.send(new ProducerRecord<>("alertes-retours", event.getVille(), alerte));
+                        System.out.println("ALERTE: " + alerte);
                     }
                 }
             }
-        } catch (Exception ex) {
-            ex.printStackTrace();
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 }
